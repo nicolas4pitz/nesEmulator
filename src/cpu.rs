@@ -1,268 +1,293 @@
 use crate::opcodes;
 use std::collections::HashMap;
 
+// Define as flags de status da CPU usando a crate bitflags
 bitflags! {
-    /// # Status Register (P) http://wiki.nesdev.com/w/index.php/Status_flags
-    ///
-    ///  7 6 5 4 3 2 1 0
-    ///  N V _ B D I Z C
-    ///  | |   | | | | +--- Carry Flag
-    ///  | |   | | | +----- Zero Flag
-    ///  | |   | | +------- Interrupt Disable
-    ///  | |   | +--------- Decimal Mode (not used on NES)
-    ///  | |   +----------- Break Command
-    ///  | +--------------- Overflow Flag
-    ///  +----------------- Negative Flag
-    ///
-    pub struct CpuFlags: u8 {
-        const CARRY             = 0b00000001;
-        const ZERO              = 0b00000010;
-        const INTERRUPT_DISABLE = 0b00000100;
-        const DECIMAL_MODE      = 0b00001000;
-        const BREAK             = 0b00010000;
-        const BREAK2            = 0b00100000;
-        const OVERFLOW          = 0b01000000;
-        const NEGATIV           = 0b10000000;
-    }
+  /// # Status Register (P) http://wiki.nesdev.com/w/index.php/Status_flags
+  ///
+  ///  7 6 5 4 3 2 1 0
+  ///  N V _ B D I Z C
+  ///  | |   | | | | +--- Carry Flag
+  ///  | |   | | | +----- Zero Flag
+  ///  | |   | | +------- Interrupt Disable
+  ///  | |   | +--------- Decimal Mode (not used on NES)
+  ///  | |   +----------- Break Command
+  ///  | +--------------- Overflow Flag
+  ///  +----------------- Negative Flag
+  ///
+  pub struct CpuFlags: u8 {
+      const CARRY             = 0b00000001; // Flag de Carry
+      const ZERO              = 0b00000010; // Flag de Zero
+      const INTERRUPT_DISABLE = 0b00000100; // Flag de Desabilitar Interrupção
+      const DECIMAL_MODE      = 0b00001000; // Flag de Modo Decimal (não usado no NES)
+      const BREAK             = 0b00010000; // Flag de Break
+      const BREAK2            = 0b00100000; // Segunda Flag de Break
+      const OVERFLOW          = 0b01000000; // Flag de Overflow
+      const NEGATIV           = 0b10000000; // Flag de Negativo
+  }
 }
 
-const STACK: u16 = 0x0100;
-const STACK_RESET: u8 = 0xfd;
+const STACK: u16 = 0x0100; // Endereço base da pilha
+const STACK_RESET: u8 = 0xfd; // Valor inicial do ponteiro da pilha
 
+// Estrutura que representa a CPU
 pub struct CPU {
-    pub register_a: u8,
-    pub register_x: u8,
-    pub register_y: u8,
-    pub status: CpuFlags,
-    pub program_counter: u16,
-    pub stack_pointer: u8,
-    memory: [u8; 0xFFFF],
+  pub register_a: u8, // Registrador A
+  pub register_x: u8, // Registrador X
+  pub register_y: u8, // Registrador Y
+  pub status: CpuFlags, // Registrador de status
+  pub program_counter: u16, // Contador de programa
+  pub stack_pointer: u8, // Ponteiro da pilha
+  memory: [u8; 0xFFFF], // Memória da CPU
 }
 
+// Enum que representa os modos de endereçamento
 #[derive(Debug)]
 #[allow(non_camel_case_types)]
 pub enum AddressingMode {
-    Immediate,
-    ZeroPage,
-    ZeroPage_X,
-    ZeroPage_Y,
-    Absolute,
-    Absolute_X,
-    Absolute_Y,
-    Indirect_X,
-    Indirect_Y,
-    NoneAddressing,
+  Immediate, // Endereçamento imediato
+  ZeroPage, // Endereçamento na página zero
+  ZeroPage_X, // Endereçamento na página zero com offset X
+  ZeroPage_Y, // Endereçamento na página zero com offset Y
+  Absolute, // Endereçamento absoluto
+  Absolute_X, // Endereçamento absoluto com offset X
+  Absolute_Y, // Endereçamento absoluto com offset Y
+  Indirect_X, // Endereçamento indireto com offset X
+  Indirect_Y, // Endereçamento indireto com offset Y
+  NoneAddressing, // Sem endereçamento
 }
 
+// Trait que define operações de leitura e escrita na memória
 pub trait Mem {
-    fn mem_read(&self, addr: u16) -> u8;
+  fn mem_read(&self, addr: u16) -> u8; // Lê um byte da memória
 
-    fn mem_write(&mut self, addr: u16, data: u8);
+  fn mem_write(&mut self, addr: u16, data: u8); // Escreve um byte na memória
 
-    fn mem_read_u16(&self, pos: u16) -> u16 {
-        let lo = self.mem_read(pos) as u16;
-        let hi = self.mem_read(pos + 1) as u16;
-        (hi << 8) | (lo as u16)
-    }
+  fn mem_read_u16(&self, pos: u16) -> u16 { // Lê dois bytes da memória
+      let lo = self.mem_read(pos) as u16;
+      let hi = self.mem_read(pos + 1) as u16;
+      (hi << 8) | (lo as u16)
+  }
 
-    fn mem_write_u16(&mut self, pos: u16, data: u16) {
-        let hi = (data >> 8) as u8;
-        let lo = (data & 0xff) as u8;
-        self.mem_write(pos, lo);
-        self.mem_write(pos + 1, hi);
-    }
+  fn mem_write_u16(&mut self, pos: u16, data: u16) { // Escreve dois bytes na memória
+      let hi = (data >> 8) as u8;
+      let lo = (data & 0xff) as u8;
+      self.mem_write(pos, lo);
+      self.mem_write(pos + 1, hi);
+  }
 }
 
+// Implementação do trait Mem para a estrutura CPU
 impl Mem for CPU {
-    fn mem_read(&self, addr: u16) -> u8 {
-        self.memory[addr as usize]
-    }
+  fn mem_read(&self, addr: u16) -> u8 {
+      self.memory[addr as usize]
+  }
 
-    fn mem_write(&mut self, addr: u16, data: u8) {
-        self.memory[addr as usize] = data;
-    }
+  fn mem_write(&mut self, addr: u16, data: u8) {
+      self.memory[addr as usize] = data;
+  }
 }
 
+// Implementação da estrutura CPU
 impl CPU {
-    pub fn new() -> Self {
-        CPU {
-            register_a: 0,
-            register_x: 0,
-            register_y: 0,
-            stack_pointer: STACK_RESET,
-            program_counter: 0,
-            status: CpuFlags::from_bits_truncate(0b100100),
-            memory: [0; 0xFFFF],
-        }
-    }
+  pub fn new() -> Self { // Cria uma nova instância da CPU
+      CPU {
+          register_a: 0,
+          register_x: 0,
+          register_y: 0,
+          stack_pointer: STACK_RESET,
+          program_counter: 0,
+          status: CpuFlags::from_bits_truncate(0b100100),
+          memory: [0; 0xFFFF],
+      }
+  }
 
-    fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
-        match mode {
-            AddressingMode::Immediate => self.program_counter,
+  // Obtém o endereço do operando com base no modo de endereçamento
+  fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
+      match mode {
+          AddressingMode::Immediate => self.program_counter,
 
-            AddressingMode::ZeroPage => self.mem_read(self.program_counter) as u16,
+          AddressingMode::ZeroPage => self.mem_read(self.program_counter) as u16,
 
-            AddressingMode::Absolute => self.mem_read_u16(self.program_counter),
+          AddressingMode::Absolute => self.mem_read_u16(self.program_counter),
 
-            AddressingMode::ZeroPage_X => {
-                let pos = self.mem_read(self.program_counter);
-                let addr = pos.wrapping_add(self.register_x) as u16;
-                addr
-            }
-            AddressingMode::ZeroPage_Y => {
-                let pos = self.mem_read(self.program_counter);
-                let addr = pos.wrapping_add(self.register_y) as u16;
-                addr
-            }
+          AddressingMode::ZeroPage_X => {
+              let pos = self.mem_read(self.program_counter);
+              let addr = pos.wrapping_add(self.register_x) as u16;
+              addr
+          }
+          AddressingMode::ZeroPage_Y => {
+              let pos = self.mem_read(self.program_counter);
+              let addr = pos.wrapping_add(self.register_y) as u16;
+              addr
+          }
 
-            AddressingMode::Absolute_X => {
-                let base = self.mem_read_u16(self.program_counter);
-                let addr = base.wrapping_add(self.register_x as u16);
-                addr
-            }
-            AddressingMode::Absolute_Y => {
-                let base = self.mem_read_u16(self.program_counter);
-                let addr = base.wrapping_add(self.register_y as u16);
-                addr
-            }
+          AddressingMode::Absolute_X => {
+              let base = self.mem_read_u16(self.program_counter);
+              let addr = base.wrapping_add(self.register_x as u16);
+              addr
+          }
+          AddressingMode::Absolute_Y => {
+              let base = self.mem_read_u16(self.program_counter);
+              let addr = base.wrapping_add(self.register_y as u16);
+              addr
+          }
 
-            AddressingMode::Indirect_X => {
-                let base = self.mem_read(self.program_counter);
+          AddressingMode::Indirect_X => {
+              let base = self.mem_read(self.program_counter);
 
-                let ptr: u8 = (base as u8).wrapping_add(self.register_x);
-                let lo = self.mem_read(ptr as u16);
-                let hi = self.mem_read(ptr.wrapping_add(1) as u16);
-                (hi as u16) << 8 | (lo as u16)
-            }
-            AddressingMode::Indirect_Y => {
-                let base = self.mem_read(self.program_counter);
+              let ptr: u8 = (base as u8).wrapping_add(self.register_x);
+              let lo = self.mem_read(ptr as u16);
+              let hi = self.mem_read(ptr.wrapping_add(1) as u16);
+              (hi as u16) << 8 | (lo as u16)
+          }
+          AddressingMode::Indirect_Y => {
+              let base = self.mem_read(self.program_counter);
 
-                let lo = self.mem_read(base as u16);
-                let hi = self.mem_read((base as u8).wrapping_add(1) as u16);
-                let deref_base = (hi as u16) << 8 | (lo as u16);
-                let deref = deref_base.wrapping_add(self.register_y as u16);
-                deref
-            }
+              let lo = self.mem_read(base as u16);
+              let hi = self.mem_read((base as u8).wrapping_add(1) as u16);
+              let deref_base = (hi as u16) << 8 | (lo as u16);
+              let deref = deref_base.wrapping_add(self.register_y as u16);
+              deref
+          }
 
-            AddressingMode::NoneAddressing => {
-                panic!("mode {:?} is not supported", mode);
-            }
-        }
-    }
+          AddressingMode::NoneAddressing => {
+              panic!("mode {:?} is not supported", mode);
+          }
+      }
+  }
 
+    // Carrega o valor na memória para o registrador Y e atualiza as flags de zero e negativo
     fn ldy(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let data = self.mem_read(addr);
-        self.register_y = data;
-        self.update_zero_and_negative_flags(self.register_y);
+      let addr = self.get_operand_address(mode);
+      let data = self.mem_read(addr);
+      self.register_y = data;
+      self.update_zero_and_negative_flags(self.register_y);
     }
 
+    // Carrega o valor na memória para o registrador X e atualiza as flags de zero e negativo
     fn ldx(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let data = self.mem_read(addr);
-        self.register_x = data;
-        self.update_zero_and_negative_flags(self.register_x);
+      let addr = self.get_operand_address(mode);
+      let data = self.mem_read(addr);
+      self.register_x = data;
+      self.update_zero_and_negative_flags(self.register_x);
     }
 
+    // Carrega o valor na memória para o registrador A e atualiza as flags de zero e negativo
     fn lda(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(&mode);
-        let value = self.mem_read(addr);
-        self.set_register_a(value);
+      let addr = self.get_operand_address(&mode);
+      let value = self.mem_read(addr);
+      self.set_register_a(value);
     }
 
+    // Armazena o valor do registrador A na memória
     fn sta(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        self.mem_write(addr, self.register_a);
+      let addr = self.get_operand_address(mode);
+      self.mem_write(addr, self.register_a);
     }
 
+    // Define o valor do registrador A e atualiza as flags de zero e negativo
     fn set_register_a(&mut self, value: u8) {
-        self.register_a = value;
-        self.update_zero_and_negative_flags(self.register_a);
+      self.register_a = value;
+      self.update_zero_and_negative_flags(self.register_a);
     }
 
+    // Realiza a operação lógica AND entre o valor na memória e o registrador A, e atualiza o registrador A
     fn and(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let data = self.mem_read(addr);
-        self.set_register_a(data & self.register_a);
+      let addr = self.get_operand_address(mode);
+      let data = self.mem_read(addr);
+      self.set_register_a(data & self.register_a);
     }
 
+    // Realiza a operação lógica XOR entre o valor na memória e o registrador A, e atualiza o registrador A
     fn eor(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let data = self.mem_read(addr);
-        self.set_register_a(data ^ self.register_a);
+      let addr = self.get_operand_address(mode);
+      let data = self.mem_read(addr);
+      self.set_register_a(data ^ self.register_a);
     }
 
+    // Realiza a operação lógica OR entre o valor na memória e o registrador A, e atualiza o registrador A
     fn ora(&mut self, mode: &AddressingMode) {
-        let addr = self.get_operand_address(mode);
-        let data = self.mem_read(addr);
-        self.set_register_a(data | self.register_a);
+      let addr = self.get_operand_address(mode);
+      let data = self.mem_read(addr);
+      self.set_register_a(data | self.register_a);
     }
 
+    // Transfere o valor do registrador A para o registrador X e atualiza as flags de zero e negativo
     fn tax(&mut self) {
-        self.register_x = self.register_a;
-        self.update_zero_and_negative_flags(self.register_x);
+      self.register_x = self.register_a;
+      self.update_zero_and_negative_flags(self.register_x);
     }
 
+    // Atualiza as flags de zero e negativo com base no resultado fornecido
     fn update_zero_and_negative_flags(&mut self, result: u8) {
-        if result == 0 {
-            self.status.insert(CpuFlags::ZERO);
-        } else {
-            self.status.remove(CpuFlags::ZERO);
-        }
+      if result == 0 {
+          self.status.insert(CpuFlags::ZERO);
+      } else {
+          self.status.remove(CpuFlags::ZERO);
+      }
 
-        if result >> 7 == 1 {
-            self.status.insert(CpuFlags::NEGATIV);
-        } else {
-            self.status.remove(CpuFlags::NEGATIV);
-        }
+      if result >> 7 == 1 {
+          self.status.insert(CpuFlags::NEGATIV);
+      } else {
+          self.status.remove(CpuFlags::NEGATIV);
+      }
     }
 
+    // Atualiza a flag de negativo com base no resultado fornecido
     fn update_negative_flags(&mut self, result: u8) {
-        if result >> 7 == 1 {
-            self.status.insert(CpuFlags::NEGATIV)
-        } else {
-            self.status.remove(CpuFlags::NEGATIV)
-        }
+      if result >> 7 == 1 {
+          self.status.insert(CpuFlags::NEGATIV)
+      } else {
+          self.status.remove(CpuFlags::NEGATIV)
+      }
     }
 
+    // Incrementa o valor do registrador X e atualiza as flags de zero e negativo
     fn inx(&mut self) {
-        self.register_x = self.register_x.wrapping_add(1);
-        self.update_zero_and_negative_flags(self.register_x);
+      self.register_x = self.register_x.wrapping_add(1);
+      self.update_zero_and_negative_flags(self.register_x);
     }
 
+    // Incrementa o valor do registrador Y e atualiza as flags de zero e negativo
     fn iny(&mut self) {
-        self.register_y = self.register_y.wrapping_add(1);
-        self.update_zero_and_negative_flags(self.register_y);
+      self.register_y = self.register_y.wrapping_add(1);
+      self.update_zero_and_negative_flags(self.register_y);
     }
 
+    // Carrega um programa na memória e executa
     pub fn load_and_run(&mut self, program: Vec<u8>) {
-        self.load(program);
-        self.reset();
-        self.run()
+      self.load(program);
+      self.reset();
+      self.run()
     }
 
+    // Carrega um programa na memória
     pub fn load(&mut self, program: Vec<u8>) {
-        self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
-        self.mem_write_u16(0xFFFC, 0x0600);
+      self.memory[0x0600..(0x0600 + program.len())].copy_from_slice(&program[..]);
+      self.mem_write_u16(0xFFFC, 0x0600);
     }
 
+    // Reseta a CPU para o estado inicial
     pub fn reset(&mut self) {
-        self.register_a = 0;
-        self.register_x = 0;
-        self.register_y = 0;
-        self.stack_pointer = STACK_RESET;
-        self.status = CpuFlags::from_bits_truncate(0b100100);
-        // self.memory = [0; 0xFFFF];
+      self.register_a = 0;
+      self.register_x = 0;
+      self.register_y = 0;
+      self.stack_pointer = STACK_RESET;
+      self.status = CpuFlags::from_bits_truncate(0b100100);
+      // self.memory = [0; 0xFFFF];
 
-        self.program_counter = self.mem_read_u16(0xFFFC);
+      self.program_counter = self.mem_read_u16(0xFFFC);
     }
 
+    // Define a flag de carry
     fn set_carry_flag(&mut self) {
-        self.status.insert(CpuFlags::CARRY)
+      self.status.insert(CpuFlags::CARRY)
     }
 
+    // Limpa a flag de carry
     fn clear_carry_flag(&mut self) {
-        self.status.remove(CpuFlags::CARRY)
+      self.status.remove(CpuFlags::CARRY)
     }
 
     /// note: ignoring decimal mode
