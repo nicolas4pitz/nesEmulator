@@ -20,6 +20,30 @@ impl CPU {
         }
     }
 
+    public fn check_register_z_and_n(&self, register: u8){
+        if register == 0 {
+            self.status = self.status | 0b0000_0010; // Liga o Z
+        } else {
+            self.status = self.status & 0b1111_1101 // Desliga o Z
+        };
+
+        if register & 0b1000_0000 != 0 {
+            self.status = self.status | 0b1000_0000 // Liga o N
+        } else {
+            self.status = self.status & 0b0111_1111 // Desliga o N
+        }
+    }
+
+    fn lda(&self, param: u8){
+        self.register_a = param
+        check_register_z_and_n(self.register_a);
+    }
+
+    fn tax(&self){
+        self.register_x = self.register_a;
+        check_register_z_and_n(self.register_x);
+    }
+
     pub fn interpret(&mut self, ROM: Vec<u8>) {
         self.program_counter = 0;
 
@@ -29,25 +53,18 @@ impl CPU {
 
             //Verificar o que representa esse opcode em um switch case
             match opcode {
+
+                // TAX = Carrega o acumulador A em X
+                0xAA => tax()
+                    
+                
+
                 //Caso tenha esse opcode, faça tal
                 //LDA = Adiciona o prox byte
                 0xA9 => {
                     let param = ROM[self.program_counter as usize];
                     self.program_counter += 1;
-
-                    self.register_a = param;
-
-                    if self.register_a == 0 {
-                        self.status = self.status | 0b0000_0010; // Liga o Z
-                    } else {
-                        self.status = self.status & 0b1111_1101 // Desliga o Z
-                    };
-
-                    if self.register_a & 0b1000_0000 != 0 {
-                        self.status = self.status | 0b1000_0000 // Liga o N
-                    } else {
-                        self.status = self.status & 0b0111_1111 // Desliga o N
-                    }
+                    lda(param);
                 }
 
                 0x00 => {
@@ -69,6 +86,15 @@ mod test {
         let mut cpu = CPU::new();
         cpu.interpret(vec![0xa9, 0x05, 0x00]);
         assert_eq!(cpu.register_a, 0x05);
+        assert!(cpu.status & 0b0000_0010 == 0b00);
+        assert!(cpu.status & 0b1000_0000 == 0);
+    }
+
+    #[test]
+    fn test_0xaa_tax_move_a_to_x() {
+        let mut cpu = CPU::new();
+        cpu.interpret(vec![0x09, 0x05, 0xaa, 0x00]);
+        assert_eq!(cpu.register_x, 0x05);
         assert!(cpu.status & 0b0000_0010 == 0b00);
         assert!(cpu.status & 0b1000_0000 == 0);
     }
