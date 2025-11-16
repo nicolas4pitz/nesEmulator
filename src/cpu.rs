@@ -20,7 +20,7 @@ impl CPU {
         }
     }
 
-    public fn check_register_z_and_n(&self, register: u8){
+    pub fn check_register_z_and_n(&mut self, register: u8){
         if register == 0 {
             self.status = self.status | 0b0000_0010; // Liga o Z
         } else {
@@ -34,14 +34,19 @@ impl CPU {
         }
     }
 
-    fn lda(&self, param: u8){
-        self.register_a = param
-        check_register_z_and_n(self.register_a);
+    fn lda(&mut self, param: u8){
+        self.register_a = param;
+        self.check_register_z_and_n(self.register_a);
     }
 
-    fn tax(&self){
+    fn tax(&mut self){
         self.register_x = self.register_a;
-        check_register_z_and_n(self.register_x);
+        self.check_register_z_and_n(self.register_x);
+    }
+
+    fn inx(&mut self){
+      self.register_x = self.register_x.wrapping_add(1);
+      self.check_register_z_and_n(self.register_x);
     }
 
     pub fn interpret(&mut self, ROM: Vec<u8>) {
@@ -55,17 +60,18 @@ impl CPU {
             match opcode {
 
                 // TAX = Carrega o acumulador A em X
-                0xAA => tax()
+                0xAA => self.tax(),
                     
-                
 
                 //Caso tenha esse opcode, faça tal
                 //LDA = Adiciona o prox byte
                 0xA9 => {
                     let param = ROM[self.program_counter as usize];
                     self.program_counter += 1;
-                    lda(param);
+                    self.lda(param);
                 }
+
+                0xE8 => self.inx(),
 
                 0x00 => {
                     return;
@@ -92,11 +98,11 @@ mod test {
 
     #[test]
     fn test_0xaa_tax_move_a_to_x() {
-        let mut cpu = CPU::new();
-        cpu.interpret(vec![0x09, 0x05, 0xaa, 0x00]);
-        assert_eq!(cpu.register_x, 0x05);
-        assert!(cpu.status & 0b0000_0010 == 0b00);
-        assert!(cpu.status & 0b1000_0000 == 0);
+      let mut cpu = CPU::new();
+      cpu.register_a = 10;
+      cpu.interpret(vec![0xaa, 0x00]);
+
+      assert_eq!(cpu.register_x, 10)
     }
 
     #[test]
@@ -104,5 +110,22 @@ mod test {
         let mut cpu = CPU::new();
         cpu.interpret(vec![0xa9, 0x00, 0x00]);
         assert!(cpu.status & 0b0000_0010 == 0b10);
+    }
+
+      #[test]
+    fn test_5_ops_working_together() {
+        let mut cpu = CPU::new();
+        cpu.interpret(vec![0xa9, 0xc0, 0xaa, 0xe8, 0x00]);
+  
+        assert_eq!(cpu.register_x, 0xc1)
+    }
+
+    #[test]
+    fn test_inx_overflow() {
+        let mut cpu = CPU::new();
+        cpu.register_x = 0xff;
+        cpu.interpret(vec![0xe8, 0xe8, 0x00]);
+
+        assert_eq!(cpu.register_x, 1)
     }
 }
