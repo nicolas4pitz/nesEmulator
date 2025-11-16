@@ -9,6 +9,21 @@ pub struct CPU {
                               
 }
 
+#[derive(Debug)]
+#[allow(non_camel_case_types)]
+pub enum AddressingMode {
+  Immediate,
+  ZeroPage,
+  ZeroPage_X,
+  ZeroPage_Y,
+  Absolute,
+  Absolute_X,
+  Absolute_Y,
+  Indirect_X,
+  Indirect_Y,
+  NoneAddressing,
+}
+
 impl CPU {
     fn new() -> Self {
         CPU {
@@ -37,10 +52,10 @@ impl CPU {
     }
 
     fn mem_write_u16(&mut self, pos: u16, data: u16) {
-      let hi = (data >> 8) as u8;
-      let lo = (data & 0xff) as u8;
-      self.mem_write(pos, lo);
-      self.mem_write(pos + 1, hi);
+      let hi = (data >> 8) as u8; // Extrai o byte alto; 0x8000 >> 8 = 0x0080, as u8 pega somente o 0x80
+      let lo = (data & 0xff) as u8; // Extrai o byte baixo; 0x8000 & 0xff = 0x0000; as u8 pega somente o 0x00
+      self.mem_write(pos, lo); // Escreve o byte baixo primeiro
+      self.mem_write(pos + 1, hi); // Escreve o byte alto depois
     }
 
     // Reset vai restaurar o estado de todos os registradores, e inicializar o pc (program_counter) pelo segundo byte armazenado em 0xFFFC
@@ -54,11 +69,12 @@ impl CPU {
 
     pub fn load_and_run(&mut self, program: Vec<u8>) {
         self.load(program);
-        self.reset(); // No meio mesmo?
+        self.reset();
         self.run();
     }
 
     pub fn load(&mut self, program: Vec<u8>){
+      //Copia para a memoria cada fatia
       self.memory[0x8000 .. (0x8000 + program.len())].copy_from_slice(&program[..]);
       self.mem_write_u16(0xFFFC, 0x8000);
     }
@@ -77,10 +93,20 @@ impl CPU {
 
                 //Caso tenha esse opcode, faça tal
                 //LDA = Adiciona o prox byte
+                //LDA tem diferentes ADdressingMode
                 0xA9 => {
-                    let param = self.mem_read(self.program_counter);
+                  self.lda(&AddressingMode::Immediate);
                     self.program_counter += 1;
-                    self.lda(param);
+                }
+
+                0xA5 => {
+                  self.lda(&AddressingMode::ZeroPage);
+                  self.program_counter += 1;
+                }
+
+                0xAD => {
+                  self.lda(&AddressingMode::Absolute);
+                  self.program_counter += 2;
                 }
 
                 0xE8 => self.inx(),
@@ -108,8 +134,11 @@ impl CPU {
         }
     }
 
-    fn lda(&mut self, param: u8){
-        self.register_a = param;
+    fn lda(&mut self, mode: &AddressingMode){
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+        
+        self.register_a = value;
         self.check_register_z_and_n(self.register_a);
     }
 
@@ -123,36 +152,60 @@ impl CPU {
       self.check_register_z_and_n(self.register_x);
     }
 
-    pub fn interpret(&mut self, ROM: Vec<u8>) {
-        self.program_counter = 0;
+    fn get_operand_address(&mut self, mode: &AddressingMode) -> u16 {
+      match mode {
+          AddressingMode::Immediate => self.program_counter,
 
-        loop {
-            let opcode: u8 = ROM[self.program_counter as usize];
-            self.program_counter += 1;
+          AddressingMode::ZeroPage => self.mem_read(self.program_counter) as u16,
 
-            //Verificar o que representa esse opcode em um switch case
-            match opcode {
+          AddressingMode::Absolute => self.mem_read_u16(self.program_counter),
 
-                // TAX = Carrega o acumulador A em X
-                0xAA => self.tax(),
+          AddressingMode::ZeroPage_X => {
+            let pos = self.mem_read(self.program_counter);
+            let addr = pos.wrapping_add(self.register_x) as u16;
+            addr
+          }
 
-                //Caso tenha esse opcode, faça tal
-                //LDA = Adiciona o prox byte
-                0xA9 => {
-                    let param = ROM[self.program_counter as usize];
-                    self.program_counter += 1;
-                    self.lda(param);
-                }
+          AddressingMode::ZeroPage_Y => {
+              let pos = self.mem_read(self.program_counter);
+              let addr = pos.wrapping_add(self.register_y) as u16;
+              addr
+          }
 
-                0xE8 => self.inx(),
+          AddressingMode::Absolute_X => {
+              let base = self.mem_read_u16(self.program_counter);
+              let addr = base.wrapping_add(self.register_x as u16);
+              addr
+          }
 
-                0x00 => {
-                    return;
-                }
+          AddressingMode::Absolute_Y => {
+              let base = self.mem_read_u16(self.program_counter);
+              let addr = base.wrapping_add(self.register_y as u16);
+              addr
+          }
 
-                _ => todo!(),
-            }
-        }
+          AddressingMode::Indirect_X => {
+              let base = self.mem_read(self.program_counter);
+
+              let ptr: u8 = (base as u8).wrapping_add(self.register_x);
+              let lo = self.mem_read(ptr as u16);
+              let hi = self.mem_read(ptr.wrapping_add(1) as u16);
+              (hi as u16) << 8 | (lo as u16)
+          }
+          AddressingMode::Indirect_Y => {
+              let base = self.mem_read(self.program_counter);
+
+              let lo = self.mem_read(base as u16);
+              let hi = self.mem_read((base as u8).wrapping_add(1) as u16);
+              let deref_base = (hi as u16) << 8 | (lo as u16);
+              let deref = deref_base.wrapping_add(self.register_y as u16);
+              deref
+          }
+        
+          AddressingMode::NoneAddressing => {
+              panic!("mode {:?} is not supported", mode);
+          }
+      }
     }
 }
 
@@ -205,4 +258,14 @@ mod test {
 
         assert_eq!(cpu.register_x, 1)
     }
+
+    #[test]
+  fn test_lda_from_memory() {
+      let mut cpu = CPU::new();
+      cpu.mem_write(0x10, 0x55);
+
+      cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
+
+      assert_eq!(cpu.register_a, 0x55);
+  }
 }
