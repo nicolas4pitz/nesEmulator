@@ -26,18 +26,41 @@ impl CPU {
       self.memory[addr as usize]
     }
 
+    fn mem_read_u16(&mut self, pos: u16) -> u16 {
+      let lo = self.mem_read(pos) as u16;
+      let hi = self.mem_read(pos + 1) as u16;
+      (hi << 8) | (lo as u16)
+    }
+
     fn mem_write(&mut self, addr: u16, data: u8){
       self.memory[addr as usize] = data;
     }
 
+    fn mem_write_u16(&mut self, pos: u16, data: u16) {
+      let hi = (data >> 8) as u8;
+      let lo = (data & 0xff) as u8;
+      self.mem_write(pos, lo);
+      self.mem_write(pos + 1, hi);
+    }
+
+    // Reset vai restaurar o estado de todos os registradores, e inicializar o pc (program_counter) pelo segundo byte armazenado em 0xFFFC
+    pub fn reset(&mut self){
+      self.register_a = 0;
+      self.register_x = 0;
+      self.status = 0;
+
+      self.program_counter = self.mem_read_u16(0xFFFC);
+    }
+
     pub fn load_and_run(&mut self, program: Vec<u8>) {
         self.load(program);
+        self.reset(); // No meio mesmo?
         self.run();
     }
 
     pub fn load(&mut self, program: Vec<u8>){
       self.memory[0x8000 .. (0x8000 + program.len())].copy_from_slice(&program[..]);
-      self.program_counter = 0x8000;
+      self.mem_write_u16(0xFFFC, 0x8000);
     }
 
     pub fn run(&mut self){
@@ -149,8 +172,10 @@ mod test {
     #[test]
     fn test_0xaa_tax_move_a_to_x() {
       let mut cpu = CPU::new();
+      cpu.load(vec![0xaa, 0x00]);
+      cpu.reset();
       cpu.register_a = 10;
-      cpu.load_and_run(vec![0xaa, 0x00]);
+      cpu.run();
 
       assert_eq!(cpu.register_x, 10)
     }
@@ -173,8 +198,10 @@ mod test {
     #[test]
     fn test_inx_overflow() {
         let mut cpu = CPU::new();
+        cpu.load(vec![0xe8, 0xe8, 0x00]);
+        cpu.reset();
         cpu.register_x = 0xff;
-        cpu.load_and_run(vec![0xe8, 0xe8, 0x00]);
+        cpu.run();
 
         assert_eq!(cpu.register_x, 1)
     }
